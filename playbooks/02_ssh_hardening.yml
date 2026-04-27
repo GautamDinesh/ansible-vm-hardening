@@ -1,0 +1,127 @@
+---
+# playbooks/02_ssh_hardening.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Enforces a secure sshd_config baseline across all hosts.
+# Validates the config before restarting sshd to prevent lockout.
+# All tunable values live in inventory/group_vars/all.yml.
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini playbooks/02_ssh_hardening.yml
+#   ansible-playbook -i inventory/hosts.ini playbooks/02_ssh_hardening.yml --check   # dry run
+
+- name: SSH Hardening — Enforce Secure sshd_config
+  hosts: all_vms
+  become: true
+  gather_facts: true
+
+  handlers:
+    - name: Validate and restart sshd
+      ansible.builtin.shell: |
+        sshd -t && systemctl restart sshd
+      changed_when: false
+
+  tasks:
+
+    - name: Ensure openssh-server is installed
+      ansible.builtin.package:
+        name: openssh-server
+        state: present
+
+    - name: Back up existing sshd_config
+      ansible.builtin.copy:
+        src: /etc/ssh/sshd_config
+        dest: "/etc/ssh/sshd_config.bak.{{ ansible_date_time.date }}"
+        remote_src: true
+        mode: "0600"
+        force: false        # only back up once per day
+
+    - name: Set SSH port
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?Port "
+        line: "Port {{ ssh_port }}"
+        state: present
+      notify: Validate and restart sshd
+
+    - name: Disable root login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PermitRootLogin"
+        line: "PermitRootLogin {{ ssh_permit_root_login }}"
+        state: present
+      notify: Validate and restart sshd
+
+    - name: Disable password authentication
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PasswordAuthentication"
+        line: "PasswordAuthentication {{ ssh_password_authentication }}"
+        state: present
+      notify: Validate and restart sshd
+
+    - name: Set MaxAuthTries
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?MaxAuthTries"
+        line: "MaxAuthTries {{ ssh_max_auth_tries }}"
+        state: present
+      notify: Validate and restart sshd
+
+    - name: Set ClientAliveInterval
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?ClientAliveInterval"
+        line: "ClientAliveInterval {{ ssh_client_alive_interval }}"
+        state: present
+      notify: Validate and restart sshd
+
+    - name: Set ClientAliveCountMax
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?ClientAliveCountMax"
+        line: "ClientAliveCountMax {{ ssh_client_alive_count_max }}"
+        state: present
+      notify: Validate and restart sshd
+
+    - name: Disable X11 forwarding
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?X11Forwarding"
+        line: "X11Forwarding no"
+        state: present
+      notify: Validate and restart sshd
+
+    - name: Restrict allowed users (if list is defined)
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?AllowUsers"
+        line: "AllowUsers {{ ssh_allowed_users | join(' ') }}"
+        state: present
+      when: ssh_allowed_users | length > 0
+      notify: Validate and restart sshd
+
+    - name: Ensure SSH protocol is set to 2 only
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?Protocol"
+        line: "Protocol 2"
+        state: present
+      notify: Validate and restart sshd
+
+    - name: Disable empty passwords
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PermitEmptyPasswords"
+        line: "PermitEmptyPasswords no"
+        state: present
+      notify: Validate and restart sshd
+
+    - name: Verify sshd_config is valid
+      ansible.builtin.command: sshd -t
+      changed_when: false
+      register: sshd_test
+
+    - name: Confirm SSH config passed validation
+      ansible.builtin.debug:
+        msg: "sshd_config validation passed on {{ inventory_hostname }}"
+      when: sshd_test.rc == 0

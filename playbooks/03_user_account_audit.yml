@@ -1,0 +1,100 @@
+---
+# playbooks/03_user_account_audit.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Audits local user accounts across all hosts:
+#   1. Lists all human accounts (UID >= 1000)
+#   2. Identifies accounts with no login in the last N days (idle)
+#   3. Locks idle accounts (or reports them in check mode)
+#   4. Detects accounts with no password set
+#   5. Saves a per-host audit report to /var/log/ansible_user_audit.log
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini playbooks/03_user_account_audit.yml
+#   ansible-playbook -i inventory/hosts.ini playbooks/03_user_account_audit.yml --check  # report only, no changes
+
+- name: User Account Audit — Detect and Lock Idle Accounts
+  hosts: all_vms
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    - name: Get all local human accounts (UID >= 1000, excluding nobody)
+      ansible.builtin.shell: |
+        awk -F: '$3 >= 1000 && $1 != "nobody" { print $1 }' /etc/passwd
+      register: all_users
+      changed_when: false
+
+    - name: Get accounts with no password set
+      ansible.builtin.shell: |
+        awk -F: '($2 == "" || $2 == "!!" || $2 == "*") && $3 >= 1000 { print $1 }' /etc/shadow
+      register: no_password_accounts
+      changed_when: false
+
+    - name: Get last login timestamps for all users
+      ansible.builtin.command: lastlog
+      register: lastlog_output
+      changed_when: false
+
+    - name: Identify idle accounts (no login in {{ account_idle_days }} days)
+      ansible.builtin.shell: |
+        cutoff=$(date -d "-{{ account_idle_days }} days" +%s)
+        while IFS= read -r user; do
+          last_login=$(lastlog -u "$user" 2>/dev/null | tail -1)
+          if echo "$last_login" | grep -q "Never logged in"; then
+            echo "$user"
+            continue
+          fi
+          login_date=$(echo "$last_login" | awk '{print $4, $5, $6, $7}' 2>/dev/null)
+          if [ -n "$login_date" ]; then
+            login_ts=$(date -d "$login_date" +%s 2>/dev/null) || continue
+            [ "$login_ts" -lt "$cutoff" ] && echo "$user"
+          fi
+        done < <(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd)
+      register: idle_accounts
+      changed_when: false
+
+    - name: Lock idle accounts
+      ansible.builtin.user:
+        name: "{{ item }}"
+        password_lock: true
+      loop: "{{ idle_accounts.stdout_lines }}"
+      when:
+        - idle_accounts.stdout_lines | length > 0
+        - account_lock_instead_of_delete | bool
+      register: locked_accounts
+
+    - name: Build audit report content
+      ansible.builtin.set_fact:
+        audit_report: |
+          ════════════════════════════════════════════════════════
+          USER ACCOUNT AUDIT — {{ inventory_hostname }}
+          Generated: {{ ansible_date_time.iso8601 }}
+          ════════════════════════════════════════════════════════
+
+          ALL HUMAN ACCOUNTS (UID >= 1000):
+          {{ all_users.stdout_lines | join(', ') | default('None found') }}
+
+          ACCOUNTS WITH NO PASSWORD:
+          {{ no_password_accounts.stdout_lines | join(', ') | default('None') }}
+
+          IDLE ACCOUNTS (no login > {{ account_idle_days }} days):
+          {{ idle_accounts.stdout_lines | join(', ') | default('None') }}
+
+          ACTION TAKEN: {{ 'Locked idle accounts' if (account_lock_instead_of_delete and idle_accounts.stdout_lines | length > 0) else 'No changes made (check mode or no idle accounts)' }}
+          ════════════════════════════════════════════════════════
+
+    - name: Write audit report to remote host
+      ansible.builtin.copy:
+        content: "{{ audit_report }}"
+        dest: /var/log/ansible_user_audit.log
+        mode: "0640"
+
+    - name: Print audit summary to console
+      ansible.builtin.debug:
+        msg:
+          - "Host: {{ inventory_hostname }}"
+          - "Total accounts: {{ all_users.stdout_lines | length }}"
+          - "No-password accounts: {{ no_password_accounts.stdout_lines | length }}"
+          - "Idle accounts found: {{ idle_accounts.stdout_lines | length }}"
+          - "Idle accounts: {{ idle_accounts.stdout_lines | default(['None']) }}"

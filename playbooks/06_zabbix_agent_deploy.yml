@@ -1,0 +1,142 @@
+---
+# playbooks/06_zabbix_agent_deploy.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Installs and configures the Zabbix agent on all hosts.
+# Points each agent at the central Zabbix server.
+# Agent version and server details are set in inventory/group_vars/all.yml.
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini playbooks/06_zabbix_agent_deploy.yml
+#   ansible-playbook -i inventory/hosts.ini playbooks/06_zabbix_agent_deploy.yml --limit production
+
+- name: Zabbix Agent — Deploy and Configure on All Hosts
+  hosts: all_vms
+  become: true
+  gather_facts: true
+
+  handlers:
+    - name: Restart zabbix-agent
+      ansible.builtin.service:
+        name: zabbix-agent
+        state: restarted
+
+  tasks:
+
+    # ── Add Zabbix repository ─────────────────────────────────────────────────
+    - name: Add Zabbix apt repository (Debian/Ubuntu)
+      ansible.builtin.deb822_repository:
+        name: zabbix
+        types: deb
+        uris: "https://repo.zabbix.com/zabbix/6.4/ubuntu"
+        suites: "{{ ansible_distribution_release }}"
+        components: main
+        signed_by: "https://repo.zabbix.com/zabbix-official-repo.key"
+        state: present
+      when: ansible_os_family == "Debian"
+      notify: Restart zabbix-agent
+
+    - name: Add Zabbix yum repository (RHEL)
+      ansible.builtin.yum_repository:
+        name: zabbix
+        description: Zabbix Official Repository
+        baseurl: "https://repo.zabbix.com/zabbix/6.4/rhel/{{ ansible_distribution_major_version }}/x86_64/"
+        gpgcheck: true
+        gpgkey: "https://repo.zabbix.com/RPM-GPG-KEY-ZABBIX"
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    # ── Install agent ─────────────────────────────────────────────────────────
+    - name: Update apt cache after adding repo (Debian)
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Install Zabbix agent package
+      ansible.builtin.package:
+        name: zabbix-agent
+        state: present
+
+    # ── Configure agent ───────────────────────────────────────────────────────
+    - name: Back up default zabbix_agentd.conf
+      ansible.builtin.copy:
+        src: /etc/zabbix/zabbix_agentd.conf
+        dest: "/etc/zabbix/zabbix_agentd.conf.bak.{{ ansible_date_time.date }}"
+        remote_src: true
+        mode: "0640"
+        force: false
+
+    - name: Set Zabbix Server IP
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: "^Server="
+        line: "Server={{ zabbix_server_ip }}"
+      notify: Restart zabbix-agent
+
+    - name: Set Zabbix ServerActive IP
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: "^ServerActive="
+        line: "ServerActive={{ zabbix_server_ip }}"
+      notify: Restart zabbix-agent
+
+    - name: Set agent hostname to system hostname
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: "^Hostname="
+        line: "Hostname={{ ansible_hostname }}"
+      notify: Restart zabbix-agent
+
+    - name: Set agent listen port
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: "^ListenPort="
+        line: "ListenPort={{ zabbix_agent_port }}"
+      notify: Restart zabbix-agent
+
+    - name: Enable remote commands (for Zabbix remote scripts)
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: "^EnableRemoteCommands="
+        line: "EnableRemoteCommands=1"
+      notify: Restart zabbix-agent
+
+    - name: Set log file size limit
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: "^LogFileSize="
+        line: "LogFileSize=10"
+      notify: Restart zabbix-agent
+
+    # ── Open firewall for Zabbix agent port ───────────────────────────────────
+    - name: Allow Zabbix agent port through ufw
+      community.general.ufw:
+        rule: allow
+        port: "{{ zabbix_agent_port | string }}"
+        proto: tcp
+        src: "{{ zabbix_server_ip }}"
+        comment: "Zabbix server — allowed by Ansible"
+      ignore_errors: true     # ufw may not be installed on all hosts
+
+    # ── Enable and start ──────────────────────────────────────────────────────
+    - name: Enable and start Zabbix agent service
+      ansible.builtin.service:
+        name: zabbix-agent
+        state: started
+        enabled: true
+
+    # ── Verify ────────────────────────────────────────────────────────────────
+    - name: Verify Zabbix agent is listening on correct port
+      ansible.builtin.wait_for:
+        port: "{{ zabbix_agent_port }}"
+        host: "{{ ansible_default_ipv4.address }}"
+        timeout: 15
+        msg: "Zabbix agent is not listening on port {{ zabbix_agent_port }}"
+
+    - name: Print deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "Host      : {{ inventory_hostname }} ({{ ansible_hostname }})"
+          - "Agent IP  : {{ ansible_default_ipv4.address }}"
+          - "Server    : {{ zabbix_server_ip }}"
+          - "Port      : {{ zabbix_agent_port }}"
+          - "Status    : Installed and running"

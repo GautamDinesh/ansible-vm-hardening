@@ -1,0 +1,90 @@
+---
+# playbooks/01_patch_management.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Applies security patches to all target hosts.
+# Supports Debian/Ubuntu (apt) and RHEL/CentOS (yum/dnf).
+# Optionally reboots if a kernel or libc update was applied.
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini playbooks/01_patch_management.yml
+#   ansible-playbook -i inventory/hosts.ini playbooks/01_patch_management.yml --limit production
+#   ansible-playbook -i inventory/hosts.ini playbooks/01_patch_management.yml -e "patch_reboot_if_required=false"
+
+- name: Patch Management — Apply Security Updates
+  hosts: all_vms
+  become: true
+  serial: 5          # patch 5 hosts at a time to avoid simultaneous reboots
+  gather_facts: true
+
+  tasks:
+
+    # ── Debian / Ubuntu ───────────────────────────────────────────────────────
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: "{{ patch_cache_valid_time }}"
+      when: ansible_os_family == "Debian"
+
+    - name: Apply all security upgrades (apt)
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: true
+        autoclean: true
+      register: apt_result
+      when: ansible_os_family == "Debian"
+
+    - name: Check if reboot is required (Debian/Ubuntu)
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+      when: ansible_os_family == "Debian"
+
+    # ── RHEL / CentOS / Rocky ─────────────────────────────────────────────────
+    - name: Apply all security upgrades (yum/dnf)
+      ansible.builtin.yum:
+        name: "*"
+        state: latest
+        security: true
+        update_cache: true
+      register: yum_result
+      when: ansible_os_family == "RedHat"
+
+    - name: Check if reboot is required (RHEL)
+      ansible.builtin.command: needs-restarting -r
+      register: reboot_required_rhel
+      changed_when: false
+      failed_when: false
+      when: ansible_os_family == "RedHat"
+
+    # ── Reboot if needed ──────────────────────────────────────────────────────
+    - name: Reboot host if required
+      ansible.builtin.reboot:
+        reboot_timeout: 300
+        msg: "Rebooting after security patch cycle"
+      when:
+        - patch_reboot_if_required | bool
+        - >
+          (ansible_os_family == "Debian" and
+           reboot_required_file.stat is defined and
+           reboot_required_file.stat.exists)
+          or
+          (ansible_os_family == "RedHat" and
+           reboot_required_rhel.rc is defined and
+           reboot_required_rhel.rc == 1)
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    - name: Show patch summary (Debian)
+      ansible.builtin.debug:
+        msg: "{{ apt_result.stdout_lines | default(['No apt output']) | last }}"
+      when: ansible_os_family == "Debian"
+
+    - name: Show patch summary (RHEL)
+      ansible.builtin.debug:
+        msg: "Packages updated: {{ yum_result.changes.updated | default([]) | length }}"
+      when: ansible_os_family == "RedHat"
+
+    - name: Record patch timestamp
+      ansible.builtin.copy:
+        content: "Last patched: {{ ansible_date_time.iso8601 }} by Ansible\n"
+        dest: /etc/ansible_last_patched
+        mode: "0644"

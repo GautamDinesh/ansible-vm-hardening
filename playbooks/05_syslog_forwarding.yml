@@ -1,0 +1,95 @@
+---
+# playbooks/05_syslog_forwarding.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Configures rsyslog on all hosts to forward logs to a centralised syslog
+# server. Also ensures rsyslog is running and enabled on boot.
+# Server IP and port are defined in inventory/group_vars/all.yml.
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini playbooks/05_syslog_forwarding.yml
+
+- name: Syslog Forwarding — Configure rsyslog to Forward to Central Server
+  hosts: all_vms
+  become: true
+  gather_facts: true
+
+  handlers:
+    - name: Restart rsyslog
+      ansible.builtin.service:
+        name: rsyslog
+        state: restarted
+
+  tasks:
+
+    - name: Ensure rsyslog is installed
+      ansible.builtin.package:
+        name: rsyslog
+        state: present
+
+    - name: Ensure rsyslog is enabled and started
+      ansible.builtin.service:
+        name: rsyslog
+        state: started
+        enabled: true
+
+    - name: Back up existing rsyslog.conf
+      ansible.builtin.copy:
+        src: /etc/rsyslog.conf
+        dest: "/etc/rsyslog.conf.bak.{{ ansible_date_time.date }}"
+        remote_src: true
+        mode: "0640"
+        force: false
+
+    - name: Deploy centralised forwarding config
+      ansible.builtin.copy:
+        dest: /etc/rsyslog.d/99-central-forward.conf
+        mode: "0640"
+        content: |
+          # ─────────────────────────────────────────────────────────────────
+          # Centralised syslog forwarding — managed by Ansible
+          # Target: {{ syslog_server_ip }}:{{ syslog_server_port }} ({{ syslog_protocol | upper }})
+          # Generated: {{ ansible_date_time.iso8601 }}
+          # ─────────────────────────────────────────────────────────────────
+
+          # Load TCP/UDP output module
+          {% if syslog_protocol == "tcp" %}
+          module(load="omfwd")
+          *.* action(
+            type="omfwd"
+            target="{{ syslog_server_ip }}"
+            port="{{ syslog_server_port }}"
+            protocol="tcp"
+            action.resumeRetryCount="100"
+            queue.type="linkedList"
+            queue.size="10000"
+            queue.filename="fwdqueue"
+            queue.saveOnShutdown="on"
+          )
+          {% else %}
+          *.* @{{ syslog_server_ip }}:{{ syslog_server_port }}
+          {% endif %}
+      notify: Restart rsyslog
+
+    - name: Validate rsyslog configuration
+      ansible.builtin.command: rsyslogd -N1
+      register: rsyslog_check
+      changed_when: false
+      failed_when: rsyslog_check.rc != 0
+
+    - name: Confirm rsyslog config is valid
+      ansible.builtin.debug:
+        msg: "rsyslog config valid on {{ inventory_hostname }} — forwarding to {{ syslog_server_ip }}:{{ syslog_server_port }}"
+
+    - name: Send a test log message
+      ansible.builtin.command: >
+        logger -t ansible-test "Syslog forwarding configured by Ansible on {{ inventory_hostname }} at {{ ansible_date_time.iso8601 }}"
+      changed_when: false
+
+    - name: Verify rsyslog service is running
+      ansible.builtin.service_facts:
+
+    - name: Assert rsyslog is active
+      ansible.builtin.assert:
+        that: "'rsyslog.service' in ansible_facts.services and ansible_facts.services['rsyslog.service'].state == 'running'"
+        fail_msg: "rsyslog is NOT running on {{ inventory_hostname }}"
+        success_msg: "rsyslog is running on {{ inventory_hostname }}"

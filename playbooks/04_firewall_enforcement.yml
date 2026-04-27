@@ -1,0 +1,89 @@
+---
+# playbooks/04_firewall_enforcement.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Installs and configures ufw (Uncomplicated Firewall) on all hosts.
+# Enforces a whitelist of allowed TCP ports and denies everything else.
+# Port list is defined in inventory/group_vars/all.yml.
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini playbooks/04_firewall_enforcement.yml
+#   ansible-playbook -i inventory/hosts.ini playbooks/04_firewall_enforcement.yml --limit dmz
+
+- name: Firewall Enforcement — Configure and Enable ufw
+  hosts: all_vms
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    - name: Install ufw
+      ansible.builtin.package:
+        name: ufw
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install ufw (RHEL — via EPEL)
+      ansible.builtin.package:
+        name:
+          - epel-release
+          - ufw
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Reset ufw to defaults (idempotent clean slate)
+      community.general.ufw:
+        state: reset
+      changed_when: false
+
+    - name: Set default incoming policy to deny
+      community.general.ufw:
+        default: "{{ ufw_default_incoming }}"
+        direction: incoming
+
+    - name: Set default outgoing policy to allow
+      community.general.ufw:
+        default: "{{ ufw_default_outgoing }}"
+        direction: outgoing
+
+    - name: Allow whitelisted TCP ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item | string }}"
+        proto: tcp
+        comment: "Allowed by Ansible — {{ ansible_date_time.date }}"
+      loop: "{{ ufw_allowed_tcp_ports }}"
+
+    - name: Allow NTP (UDP 123) for time sync
+      community.general.ufw:
+        rule: allow
+        port: "123"
+        proto: udp
+        comment: "NTP — allowed by Ansible"
+
+    - name: Allow established/related connections
+      ansible.builtin.command: >
+        ufw allow in on any to any
+      changed_when: false
+
+    - name: Enable ufw
+      community.general.ufw:
+        state: enabled
+
+    - name: Verify ufw is active
+      ansible.builtin.command: ufw status verbose
+      register: ufw_status
+      changed_when: false
+
+    - name: Print firewall status
+      ansible.builtin.debug:
+        msg: "{{ ufw_status.stdout_lines }}"
+
+    - name: Log firewall configuration timestamp
+      ansible.builtin.copy:
+        content: |
+          Firewall last configured: {{ ansible_date_time.iso8601 }}
+          Allowed TCP ports: {{ ufw_allowed_tcp_ports | join(', ') }}
+          Default incoming: {{ ufw_default_incoming }}
+          Default outgoing: {{ ufw_default_outgoing }}
+        dest: /etc/ansible_firewall_config
+        mode: "0644"
