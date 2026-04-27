@@ -1,0 +1,34 @@
+---
+# site.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Master playbook — runs the full hardening and configuration pipeline
+# in the correct order against all hosts.
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini site.yml
+#   ansible-playbook -i inventory/hosts.ini site.yml --tags patch
+#   ansible-playbook -i inventory/hosts.ini site.yml --limit production
+
+- name: "1 — Patch Management"
+  import_playbook: playbooks/01_patch_management.yml
+  tags: [patch]
+
+- name: "2 — SSH Hardening"
+  import_playbook: playbooks/02_ssh_hardening.yml
+  tags: [ssh, hardening]
+
+- name: "3 — User Account Audit"
+  import_playbook: playbooks/03_user_account_audit.yml
+  tags: [users, audit]
+
+- name: "4 — Firewall Enforcement"
+  import_playbook: playbooks/04_firewall_enforcement.yml
+  tags: [firewall, hardening]
+
+- name: "5 — Syslog Forwarding"
+  import_playbook: playbooks/05_syslog_forwarding.yml
+  tags: [syslog, logging]
+
+- name: "6 — Zabbix Agent Deployment"
+  import_playbook: playbooks/06_zabbix_agent_deploy.yml
+  tags: [zabbix, monitoring]
