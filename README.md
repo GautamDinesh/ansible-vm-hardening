@@ -52,15 +52,15 @@ cd ansible-vm-hardening
 ```bash
 nano inventory/hosts.ini
 ```
-Replace the example IPs with your actual hosts. Group them as `production`, `monitoring`, or `dmz`.
+Replace the example IPs with actual hosts. Group them as `production`, `monitoring`, or `dmz`.
 
 **3. Edit variables**
 ```bash
 nano inventory/group_vars/all.yml
 ```
 Key values to update:
-- `syslog_server_ip` — IP of your centralised syslog server
-- `zabbix_server_ip` — IP of your Zabbix server
+- `syslog_server_ip` — IP of centralised syslog server
+- `zabbix_server_ip` — IP of Zabbix server
 - `ufw_allowed_tcp_ports` — ports to whitelist on all VMs
 - `ssh_allowed_users` — restrict SSH to specific usernames (leave empty to allow all)
 
