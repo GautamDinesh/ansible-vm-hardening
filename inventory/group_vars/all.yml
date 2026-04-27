@@ -1,0 +1,48 @@
+# inventory/group_vars/all.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Variables shared across every host.
+# Override per-group by creating inventory/group_vars/<group_name>.yml
+
+# ── Patching ──────────────────────────────────────────────────────────────────
+patch_reboot_if_required: true        # reboot after kernel/libc update if needed
+patch_cache_valid_time: 3600          # seconds before apt cache is considered stale
+
+# ── SSH hardening ─────────────────────────────────────────────────────────────
+ssh_port: 22
+ssh_permit_root_login: "no"
+ssh_password_authentication: "no"
+ssh_max_auth_tries: 3
+ssh_client_alive_interval: 300
+ssh_client_alive_count_max: 2
+ssh_allowed_users: []                 # leave empty to allow all users; e.g. ["admin","deploy"]
+
+# ── User accounts ─────────────────────────────────────────────────────────────
+account_idle_days: 90                 # lock accounts inactive longer than this
+account_lock_instead_of_delete: true  # safer default — lock rather than remove
+
+# ── Firewall (ufw) ────────────────────────────────────────────────────────────
+ufw_allowed_tcp_ports:
+  - 22     # SSH
+  - 80     # HTTP
+  - 443    # HTTPS
+  - 10050  # Zabbix agent
+  - 514    # Syslog
+
+ufw_default_incoming: deny
+ufw_default_outgoing: allow
+
+# ── NTP ───────────────────────────────────────────────────────────────────────
+ntp_servers:
+  - 0.pool.ntp.org
+  - 1.pool.ntp.org
+  - 2.pool.ntp.org
+
+# ── Syslog forwarding ─────────────────────────────────────────────────────────
+syslog_server_ip: "10.0.0.5"         # IP of your centralised syslog server
+syslog_server_port: 514
+syslog_protocol: "tcp"               # tcp or udp
+
+# ── Zabbix agent ──────────────────────────────────────────────────────────────
+zabbix_server_ip: "10.0.0.5"
+zabbix_agent_port: 10050
+zabbix_hostname_item: "system.hostname"
