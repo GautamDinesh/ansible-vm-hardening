@@ -131,27 +131,6 @@ Available tags: `patch` · `ssh` · `hardening` · `users` · `audit` · `firewa
 
 ---
 
-## Repository structure
-
-```
-ansible-vm-hardening/
-├── ansible.cfg                        # Ansible configuration (auto-loaded)
-├── site.yml                           # Master playbook — runs all playbooks in order
-├── inventory/
-│   ├── hosts.ini                      # Host inventory with groups
-│   └── group_vars/
-│       └── all.yml                    # Shared variables for all hosts
-└── playbooks/
-    ├── 01_patch_management.yml
-    ├── 02_ssh_hardening.yml
-    ├── 03_user_account_audit.yml
-    ├── 04_firewall_enforcement.yml
-    ├── 05_syslog_forwarding.yml
-    └── 06_zabbix_agent_deploy.yml
-```
-
----
-
 ## Example output
 
 ```
