@@ -4,6 +4,7 @@ An Ansible playbook collection for automating Linux VM hardening, compliance enf
 
 Built to automate real infrastructure tasks: patch management, SSH hardening, firewall enforcement, centralised syslog forwarding, and Zabbix agent deployment — the kind of repetitive work that should never be done manually across 100+ VMs.
 
+This Readme shows how to run these playbooks to automate VM hardening and Patch management.
 ---
 
 ## Playbooks
@@ -131,7 +132,7 @@ Available tags: `patch` · `ssh` · `hardening` · `users` · `audit` · `firewa
 
 ---
 
-## Example output
+## Sample output
 
 ```
 PLAY [Patch Management — Apply Security Updates] ******************************
